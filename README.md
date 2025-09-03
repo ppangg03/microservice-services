@@ -1,3 +1,3 @@
 # microservice-services
-two branch AccountService and PaymentService
+two branch Service and Frontend
 

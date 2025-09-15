@@ -1,0 +1,286 @@
+services:
+  kong-migrations:
+    image: kong
+    container_name: kong-migrations
+    environment:
+      - KONG_DATABASE=postgres
+      - KONG_PG_HOST=192.168.56.5
+      - KONG_PG_PORT=5432
+      - KONG_PG_USER=kong
+      - KONG_PG_PASSWORD=postgres
+      - KONG_PG_DATABASE=kong
+    entrypoint: ["kong", "migrations", "bootstrap"]
+    networks:
+      - kong-net
+
+  kong:
+    image: kong
+    container_name: kong
+    environment:
+      - LC_CTYPE=en_US.UTF-8
+      - LC_ALL=en_US.UTF-8
+      - KONG_DATABASE=postgres
+      - KONG_PG_HOST=192.168.56.5
+      - KONG_PG_PORT=5432
+      - KONG_PG_USER=kong
+      - KONG_PG_PASSWORD=postgres
+      - KONG_PG_DATABASE=kong
+      - KONG_PROXY_ACCESS_LOG=/dev/stdout
+      - KONG_ADMIN_ACCESS_LOG=/dev/stdout
+      - KONG_PROXY_ERROR_LOG=/dev/stderr
+      - KONG_ADMIN_ERROR_LOG=/dev/stderr
+      - KONG_PORT= 8000
+      - KONG_PORT_LISTEN= 0.0.0.0:8000
+      - KONG_ADMIN_LISTEN=0.0.0.0:8001, 0.0.0.0:8444 ssl
+    restart: on-failure
+    ports:
+      - 8000:8000
+      - 8443:8443
+      - 8001:8001
+      - 8444:8444
+    networks:
+      - kong-net
+
+  konga:
+    image: pantsel/konga
+    container_name: konga
+    environment:
+      - KONGA_APP_URL=http://kong:8001
+      - KONGA_NODE=kong
+    ports:
+      - 1337:1337
+    networks:
+      - kong-net
+    links:
+      - kong:kong
+    depends_on:
+      - kong
+
+  producer:
+    build:
+      context: /root/paymentService
+    container_name: producer
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - /var/logs:/var/logs
+    ports:
+      - "8090:8090"
+    networks:
+      - kong-net
+    environment:
+      BROKERS: broker1:9092,broker2:29095,broker3:29097
+      TOPIC: javaguides
+      SPRING_DATASOURCE_URL: jdbc:postgresql://192.168.56.5:5432/microservices
+      SPRING_DATASOURCE_USERNAME: kong
+      SPRING_DATASOURCE_PASSWORD: postgres
+    depends_on:
+      - filebeat
+      
+  consumer1:
+    build:
+      context: /root/accountManagerService
+    container_name: consumer1
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    ports:
+      - "8091:8091"
+    networks:
+      - kong-net
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://192.168.56.5:5432/microservices
+      SPRING_DATASOURCE_USERNAME: kong
+      SPRING_DATASOURCE_PASSWORD: postgres
+     
+  kafka-ui:
+    container_name: kafka-ui
+    image: provectuslabs/kafka-ui:latest
+    ports:
+      - "29092:8080"
+    depends_on:
+      - broker1
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: broker1:9092
+      KAFKA_CLUSTERS_0_METRICS_PORT: 9997
+      DYNAMIC_CONFIG_ENABLED: 'true'
+    networks:
+      - kong-net
+  broker1:
+    image: apache/kafka:latest
+    container_name: broker1
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      network_mode: host
+      KAFKA_KRAFT_MODE: true
+      KAFKA_NODE_ID: 1
+      KAFKA_LOG_DIRS: /tmp/kafka-logs
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_LISTENERS: PLAINTEXT://broker1:9092,PLAINTEXT_HOST://broker1:9093,CONTROLLER://broker1:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://192.168.56.5:9092,PLAINTEXT_HOST://192.168.250.16:9093
+      ALLOW_PLAINTEXT_LISTENER: true
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@broker1:9094,2@broker2:9094,3@broker3:9094
+      KAFKA_MESSAGE_MAX_BYTES: 2086347630
+      KAFKA_CREATE_TOPICS: "Topic1:1:3,Topic2:1:1:compact"
+    networks:
+      - kong-net
+
+  broker2:
+    image: apache/kafka:latest
+    container_name: broker2
+    ports:
+      - "9095:9092"
+      - "9096:9093"
+    environment:
+      KAFKA_KRAFT_MODE: true
+      KAFKA_NODE_ID: 2
+      KAFKA_LOG_DIRS: /tmp/kafka-logs
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_LISTENERS: PLAINTEXT://broker2:9092,PLAINTEXT_HOST://broker2:9093,CONTROLLER://broker2:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://192.168.56.5:9095,PLAINTEXT_HOST://192.168.250.16:9096
+      ALLOW_PLAINTEXT_LISTENER: true
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@broker1:9094,2@broker2:9094,3@broker3:9094
+      KAFKA_MESSAGE_MAX_BYTES: 2086347630
+      KAFKA_CREATE_TOPICS: "Topic1:1:3,Topic2:1:1:compact"
+    networks:
+      - kong-net
+
+  broker3:
+    image: apache/kafka:latest
+    container_name: broker3
+    ports:
+      - "9097:9092"
+      - "9098:9093"
+    environment:
+      KAFKA_KRAFT_MODE: true
+      KAFKA_NODE_ID: 3
+      KAFKA_LOG_DIRS: /tmp/kafka-logs
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_LOG_CLEANER_ENABLE: true
+      KAFKA_LOG_CLEANUP_POLICY: compact,delete
+      KAFKA_LOG_RETENTION_MINUTES: 604800000
+      KAFKA_LISTENERS: PLAINTEXT://broker3:9092,PLAINTEXT_HOST://broker3:9093,CONTROLLER://broker3:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://192.168.56.5:9097,PLAINTEXT_HOST://192.168.250.16:9098
+      ALLOW_PLAINTEXT_LISTENER: true
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@broker1:9094,2@broker2:9094,3@broker3:9094
+      KAFKA_MESSAGE_MAX_BYTES: 2086347630
+      KAFKA_CREATE_TOPICS: "Topic1:1:3,Topic2:1:1:compact"
+    networks:
+      - kong-net
+
+  front-end:
+    build: /root/microservices-fontend
+    container_name: front-end
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./app:/usr/src/app
+      - /usr/src/app/node_modules
+    restart: unless-stopped
+    networks:
+      - kong-net
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.4.3
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+    ports:
+      - "9200:9200"
+    networks:
+      - kong-net
+
+  logstash:
+    image: logstash:8.17.3
+    container_name: logstash
+    environment:
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+    volumes:
+      - ./logstash.conf:/usr/share/logstash/pipeline/logstash.conf
+    ports:
+      - "5044:5044"
+    depends_on:
+      - elasticsearch
+    networks:
+      - kong-net
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.4.3
+    container_name: kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    depends_on:
+      - elasticsearch
+    networks:
+      - kong-net
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+      - /root/kong/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    ports:
+      - "9090:9090"
+    networks:
+      - kong-net
+    restart: always
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - kong-net
+    depends_on:
+      - prometheus
+    restart: always
+    volumes:
+      - grafana-data:/var/lib/grafana
+
+  node-exporter:
+    image: prom/node-exporter
+    container_name: node-exporter
+    restart: unless-stopped
+    ports:
+      - "9100:9100"
+    networks:
+      - kong-net
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.6.2
+    container_name: filebeat
+    volumes:
+      - /var/logs:/var/logs
+      - ./filebeat.yml:/usr/share/filebeat/filebeat.yml
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    depends_on:
+      - logstash
+    networks:
+      - kong-net
+
+volumes:
+  grafana-data:
+networks:
+  kong-net:
+    external: true
